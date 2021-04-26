@@ -224,6 +224,9 @@ def main():
                     transforms.ToTensor(),           # Add data augmentation here
                     transforms.Normalize((0.1307,), (0.3081,))
                 ]))
+    # transform.RandomAffine(5, translate=0.05, shear=(-10, 10, -10, 10), 
+    # fill=-0.4242)
+    # ^ Add this line to the above transforms for data augmentation scheme
 
     # You can assign indices for training/validation or use a random subset for
     # training by using SubsetRandomSampler. Right now the train and validation
