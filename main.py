@@ -1,12 +1,14 @@
-from __future__ import print_function
 import argparse
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torchvision import datasets, transforms
+from scipy.ndimage import rotate
 from torch.optim.lr_scheduler import StepLR
 from torch.utils.data.sampler import SubsetRandomSampler
+from torchsummary import summary
+import matplotlib.pyplot as plt
 
 import os
 
@@ -83,10 +85,31 @@ class Net(nn.Module):
     '''
     def __init__(self):
         super(Net, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=8, kernel_size=(5,5), stride=1)
+        self.conv2 = nn.Conv2d(8, 8, (5, 5), 1)
+        self.batchnorm1 = nn.BatchNorm2d(8)
+        self.batchnorm2 = nn.BatchNorm2d(8)
+        self.fc1 = nn.Linear(8*4*4, 64)
+        self.fc2 = nn.Linear(64, 10)
 
     def forward(self, x):
-        return x
+        x = self.conv1(x)
+        x = F.relu(x)
+        x = F.max_pool2d(x, 2)
+        x = self.batchnorm1(x)
 
+        x = self.conv2(x)
+        x = F.relu(x)
+        x = F.max_pool2d(x, 2)
+        x = self.batchnorm2(x)
+
+        x = torch.flatten(x, 1)
+        x = self.fc1(x)
+        x = F.relu(x)
+        x = self.fc2(x)
+
+        output = F.log_softmax(x, dim=1)
+        return output
 
 def train(args, model, device, train_loader, optimizer, epoch):
     '''
@@ -105,6 +128,7 @@ def train(args, model, device, train_loader, optimizer, epoch):
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.sampler),
                 100. * batch_idx / len(train_loader), loss.item()))
+    return loss.item()
 
 
 def test(model, device, test_loader):
@@ -122,10 +146,12 @@ def test(model, device, test_loader):
             test_num += len(data)
 
     test_loss /= test_num
+    accuracy = 100. * correct / test_num
 
     print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.0f}%)\n'.format(
         test_loss, correct, test_num,
         100. * correct / test_num))
+    return test_loss, accuracy
 
 
 def main():
@@ -158,12 +184,16 @@ def main():
 
     parser.add_argument('--save-model', action='store_true', default=True,
                         help='For Saving the current Model')
+    parser.add_argument('--data-shrink', type=float, default=1.0, metavar='DS',
+                        help='Factor to shrink the training dataset.')
     args = parser.parse_args()
     use_cuda = not args.no_cuda and torch.cuda.is_available()
 
     torch.manual_seed(args.seed)
 
     device = torch.device("cuda" if use_cuda else "cpu")
+    #device = torch.device('cpu')
+    print(device)
 
     kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
 
@@ -172,7 +202,7 @@ def main():
         assert os.path.exists(args.load_model)
 
         # Set the test model
-        model = fcNet().to(device)
+        model = Net().to(device)
         model.load_state_dict(torch.load(args.load_model))
 
         test_dataset = datasets.MNIST('../data', train=False,
@@ -199,8 +229,23 @@ def main():
     # training by using SubsetRandomSampler. Right now the train and validation
     # sets are built from the same indices - this is bad! Change it so that
     # the training and validation sets are disjoint and have the correct relative sizes.
-    subset_indices_train = range(len(train_dataset))
-    subset_indices_valid = range(len(train_dataset))
+
+    subset_indices_train = torch.tensor([], dtype=torch.long)
+    subset_indices_valid = torch.tensor([], dtype=torch.long)
+
+    val_size = 0.15
+
+    label_classes = torch.unique(train_dataset.targets)
+    for class_ in label_classes:
+        ind = torch.where(train_dataset.targets == class_)[0]
+        split = int(val_size * len(ind))
+        subset_indices_valid = torch.cat([subset_indices_valid, ind[:split]])
+        subset_indices_train = torch.cat([subset_indices_train, ind[split:]])
+
+    m = len(subset_indices_train)
+    rand_subset = torch.randperm(m)
+    subset_indices_train = subset_indices_train[rand_subset[:int(args.data_shrink*m)]]
+
 
     train_loader = torch.utils.data.DataLoader(
         train_dataset, batch_size=args.batch_size,
@@ -212,7 +257,7 @@ def main():
     )
 
     # Load your model [fcNet, ConvNet, Net]
-    model = ConvNet().to(device)
+    model = Net().to(device)
 
     # Try different optimzers here [Adam, SGD, RMSprop]
     optimizer = optim.Adadelta(model.parameters(), lr=args.lr)
@@ -220,17 +265,36 @@ def main():
     # Set your learning rate scheduler
     scheduler = StepLR(optimizer, step_size=args.step, gamma=args.gamma)
 
+    train_losses = []
+    test_losses = []
+    max_epochs = 1
     # Training loop
     for epoch in range(1, args.epochs + 1):
-        train(args, model, device, train_loader, optimizer, epoch)
-        test(model, device, val_loader)
+        train_l = train(args, model, device, train_loader, optimizer, epoch)
+        test_l = test(model, device, val_loader)[0]
+        # Early stopping
+        if epoch > 1 and test_l > test_losses[-1]:
+            max_epochs = epoch
+            break
+        train_losses.append(train_l)
+        test_losses.append(test_l)
         scheduler.step()    # learning rate scheduler
 
-        # You may optionally save your model at each epoch here
+    # Plot loss as a function of epoch
+    plt.plot(range(1, max_epochs), train_losses, label='train')
+    plt.plot(range(1, max_epochs), test_losses, label='test')
+    plt.legend()
+    #plt.show()
 
+    # Final training and test accuracy
+    train_acc = test(model, device, train_loader)[1]
+    test_acc = test(model, device, val_loader)[1]
+
+    print(f'Train Accuracy: {train_acc}, Test Accuracy: {test_acc}')
+
+    # You may optionally save your model at each epoch here
     if args.save_model:
         torch.save(model.state_dict(), "mnist_model.pt")
-
 
 if __name__ == '__main__':
     main()
