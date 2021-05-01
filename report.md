@@ -1,5 +1,7 @@
 ### Github
 
+Repo: https://github.com/KevinHuang8/caltech-ee148-spring2020-hw03
+
 - `main.py`- Contains model architecture and training
 - `visualize.ipynb` - Contains all the code for visualization, including plots
 
@@ -63,6 +65,12 @@ Here are the 8 kernels from the first convolutional layer:
 Note that we only have 8 kernels in our first layer.
 
 It is difficult to discern what each kernel represents by looking at them, but it seems like each kernel is recognizing a different aspect or feature of the images. For example, each kernel seems to have bright pixels at different locations than the other kernels, signifying that they are each learning something separate from each other. Vague, patterns like lines and edges can be made out, so that could be one interpretation of what the network is learning. It would probably be easier to interpret larger kernels.
+
+### Confusion Matrix
+
+![confusion_matrix](C:\Users\kehua\Documents\Caltech\CS 148\caltech-ee148-spring2020-hw03\confusion_matrix.png)
+
+From this confusion matrix, we can see that all of the entries not along diagonal are close to 0, meaning that we misclassified very few images. Because we see no particular entries that stand out, there's not any one particular class that we are having trouble with, or any one particular class that tends to be classified as another class. 
 
 ### Feature Vector Visualization
 
